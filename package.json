@@ -1,0 +1,10 @@
+{
+  "name": "pixel-riot",
+  "private": true,
+  "description": "PIXEL RIOT, a 320x200 intro, with a YM2149 sound chip emulation",
+  "scripts": {
+    "test": "node --test \"tests/*.test.js\"",
+    "gen-test-ym": "node tools/gen-test-ym.js",
+    "browser-check": "node tools/browser-check.js"
+  }
+}

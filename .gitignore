@@ -1,0 +1,7 @@
+/docs/*.txt
+/ym/
+/music/
+/out/
+/node_modules/
+/docs/atari_compendium
+/docs/start.html

@@ -272,7 +272,7 @@ function frame(now) {
 }
 
 // ---------- chiptune ----------
-let ac, master, echo;
+let ac, master, echo, schedTimer;
 const midi = n => 440 * 2 ** ((n - 69) / 12);
 const PROG = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]]; // Am F C G
 const LEAD = [
@@ -345,13 +345,30 @@ function startAudio() {
   const d = noiseBuf.getChannelData(0);
   for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
   nextTime = ac.currentTime + 0.1;
-  setInterval(scheduler, 25);
+  if (!ymui.song) schedTimer = setInterval(scheduler, 25);   // a tune dropped before the click replaces the synth
+}
+
+// ---------- YM tunes ----------
+// A .ym file dropped on the page (or chosen with O) plays through the YM2149 emulator in place of the
+// built-in synth. This is the Phase 5 hook. Phase 6 replaces the synth and ties the visuals to the music.
+let ymAudio = null;
+function silenceBuiltinMusic() {
+  clearInterval(schedTimer);
+  if (master) master.gain.setTargetAtTime(0, ac.currentTime, 0.05);
+}
+const ymui = new YMUI({ status: document.getElementById("ymstatus"), onTune: silenceBuiltinMusic });
+ymui.attach();
+async function startYmAudio() {
+  ymAudio = new YMAudio(ac, { forceFallback: location.search.includes("fallback") });
+  await ymAudio.init();
+  ymui.setAudio(ymAudio);
 }
 
 // ---------- start ----------
 document.getElementById("start").addEventListener("click", e => {
   e.currentTarget.remove();
-  try { startAudio(); } catch (err) { console.warn("Audio unavailable", err); }
+  try { startAudio(); startYmAudio().catch(err => ymui.say("YM audio unavailable: " + err.message)); }
+  catch (err) { console.warn("Audio unavailable", err); }
   t0 = performance.now();
   requestAnimationFrame(frame);
 });

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YM player</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: dark; --bg: #0b0b14; --panel: #151526; --line: #2a2a45; --text: #e8e8f2; --dim: #8a8aa8; --accent: #fc0; --blue: #48f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, sans-serif; display: flex; justify-content: center; padding: 24px 16px; }
+  main { width: 100%; max-width: 640px; }
+  h1 { font: bold 20px "Courier New", monospace; letter-spacing: .15em; color: var(--accent); margin: 0 0 4px; }
+  .sub { color: var(--dim); margin: 0 0 20px; font-size: 14px; }
+  #drop { border: 2px dashed var(--line); border-radius: 8px; padding: 28px 16px; text-align: center; color: var(--dim); background: var(--panel); transition: border-color .15s, color .15s; }
+  #drop.over { border-color: var(--accent); color: var(--text); }
+  #status { margin: 16px 0; min-height: 1.5em; color: var(--text); word-break: break-word; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 10px 0; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: bold; }
+  input[type=range] { flex: 1; min-width: 120px; accent-color: var(--accent); }
+  label { color: var(--dim); font-size: 14px; display: inline-flex; align-items: center; gap: 6px; }
+  #meter { height: 8px; background: var(--panel); border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+  #meterbar { height: 100%; width: 0; background: linear-gradient(90deg, var(--blue), var(--accent)); }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 20px 0 0; font-size: 14px; }
+  dt { color: var(--dim); } dd { margin: 0; word-break: break-word; }
+  .keys { margin-top: 20px; color: var(--dim); font-size: 13px; }
+  kbd { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; font: 12px "Courier New", monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>YM PLAYER</h1>
+  <p class="sub">Plays Atari ST .ym tunes through the YM2149 emulator. Everything runs in your browser.</p>
+
+  <div id="drop">Drop a .ym file here, or <button id="open" type="button">choose a file</button></div>
+  <div id="status" aria-live="polite"></div>
+
+  <div class="row">
+    <button id="start" type="button" class="primary">Start audio</button>
+    <button id="playpause" type="button" disabled>Pause</button>
+    <button id="mute" type="button" disabled>Mute</button>
+    <label><input id="loop" type="checkbox" checked> Loop</label>
+  </div>
+  <div class="row">
+    <label for="seek">Position</label>
+    <input id="seek" type="range" min="0" max="1" value="0" step="1" disabled>
+  </div>
+  <div class="row">
+    <label for="volume">Volume</label>
+    <input id="volume" type="range" min="0" max="100" value="80" step="1">
+  </div>
+  <div id="meter" aria-hidden="true"><div id="meterbar"></div></div>
+
+  <dl>
+    <dt>Audio engine</dt><dd id="mode">not started</dd>
+    <dt>Format</dt><dd id="format">-</dd>
+    <dt>Comment</dt><dd id="comment">-</dd>
+  </dl>
+
+  <p class="keys"><kbd>Space</kbd> pause &nbsp; <kbd>M</kbd> mute &nbsp; <kbd>L</kbd> loop &nbsp; <kbd>O</kbd> open &nbsp; <kbd>&larr;</kbd><kbd>&rarr;</kbd> seek 5 s &nbsp; <kbd>&uarr;</kbd><kbd>&darr;</kbd> volume</p>
+</main>
+
+<script src="src/ym2149.js"></script>
+<script src="src/lha.js"></script>
+<script src="src/ymfile.js"></script>
+<script src="src/ymplayer.js"></script>
+<script src="src/audio.js"></script>
+<script src="src/ymui.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const forceFallback = new URLSearchParams(location.search).has("fallback");
+let audio = null, seeking = false;
+
+const ui = new YMUI({
+  status: $("status"),
+  onTune(song) {
+    $("format").textContent = `${song.format}${song.packed ? " (LHA)" : ""}, ${song.frames} frames at ${song.frameRate} Hz, ${song.drums.length} digidrums`;
+    $("comment").textContent = song.comment || "-";
+    $("seek").max = song.frames;
+  },
+  onState(st) {
+    if (!seeking) $("seek").value = st.frame;
+    $("playpause").textContent = st.playing ? "Pause" : "Play";
+    $("meterbar").style.width = Math.min(100, st.peak * 100 * 1.5) + "%";
+    if (audio) {
+      $("mute").textContent = audio.muted ? "Unmute" : "Mute";
+      $("loop").checked = audio.loop;
+      $("volume").value = Math.round(audio.volume * 100);
+    }
+  },
+});
+ui.attach();
+
+async function startAudio() {
+  if (audio) return;
+  $("start").disabled = true;
+  audio = new YMAudio(null, { forceFallback, volume: $("volume").value / 100, loop: $("loop").checked });
+  try {
+    const mode = await audio.init();
+    $("mode").textContent = mode === "worklet" ? "AudioWorklet (code loaded from a " + audio.workletLoader + ": URL)" : "ScriptProcessor fallback (" + audio.fallbackReason + ")";
+  } catch (err) {
+    ui.say("Could not start audio: " + err.message);
+    $("start").disabled = false; audio = null;
+    return;
+  }
+  ui.setAudio(audio);
+  for (const id of ["playpause", "mute", "seek"]) $(id).disabled = false;
+  $("start").textContent = "Audio started";
+  window.__ym = { audio, ui };
+}
+
+$("start").addEventListener("click", startAudio);
+$("open").addEventListener("click", () => ui.openPicker());
+$("playpause").addEventListener("click", () => audio && audio.toggle());
+$("mute").addEventListener("click", () => { if (audio) { audio.setMuted(!audio.muted); $("mute").textContent = audio.muted ? "Unmute" : "Mute"; ui.render(); } });
+$("loop").addEventListener("change", () => audio && audio.setLoop($("loop").checked));
+$("volume").addEventListener("input", () => audio && audio.setVolume($("volume").value / 100));
+$("seek").addEventListener("input", () => { seeking = true; });
+$("seek").addEventListener("change", () => { seeking = false; if (audio) audio.seek(+$("seek").value); });
+
+const drop = $("drop");
+window.addEventListener("dragenter", () => drop.classList.add("over"));
+window.addEventListener("dragleave", e => { if (!e.relatedTarget) drop.classList.remove("over"); });
+window.addEventListener("drop", () => drop.classList.remove("over"));
+window.__ym = { ui };
+</script>
+</body>
+</html>
