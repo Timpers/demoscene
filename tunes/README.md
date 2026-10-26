@@ -11,7 +11,7 @@ They are here as test material and as a source for the demo's default tune.
 - For this folder the README says only that it "contains a set of YM sample files to fastly test the library". It gives no terms for the tunes and names no authors.
 - The tunes themselves were composed by the people named in each file's header (table below). The library's author cannot grant rights over their music, and nothing in the repository says the composers did.
 
-So whether these may be redistributed is **unconfirmed**. This repository is public on GitHub. Before pushing, or before releasing the demo with any of these tunes embedded, check the position with someone able to give sign-off, or get the composers' permission. If the answer is no, remove this folder and `tunes/default-tune.js` and rebuild the default from a tune you do have the rights to (see the Phase 6 notes in the PRD).
+So whether these may be redistributed is **unconfirmed**. This repository is public on GitHub. Before pushing, or before releasing the demo with any of these tunes embedded, check the position with someone able to give sign-off, or get the composers' permission. If the answer is no, run `npm run default-tune -- tunes/pixel-riot-theme.ym` (the demo's own tune, which is not third-party music), then delete `tunes/stsound/`. Anyone who has already cloned the repository will still have the files, and they stay in the git history unless it is rewritten, so check before the first push.
 
 ## Contents
 

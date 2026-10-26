@@ -96,6 +96,11 @@ test("position messages arrive 50 to 60 times a second with sensible values", ()
   assert.equal(last.playing, true);
   assert.ok(last.peak >= 0 && last.peak <= 1.1);
   assert.ok(pos.some(m => m.peak > 0.01), "a peak level is reported");
+  // the fractional position and sample count the demo's music clock relies on
+  assert.ok(pos.every((m, i) => i === 0 || m.samples >= pos[i - 1].samples), "samples never go backwards");
+  assert.ok(Math.abs(last.samples - RATE) < 128 * 7 + 128, `about a second of samples: ${last.samples}`);
+  assert.ok(Math.abs(last.pos - last.samples / (RATE / 50)) < 1e-6, "pos is samples divided by samples per frame");
+  assert.ok(last.pos <= last.frame && last.pos > last.frame - 1 - 1e-9, "pos lies within the frame just rendered");
   assert.ok(pos.every((m, i) => i === 0 || m.frame >= pos[i - 1].frame), "frame never goes backwards without a loop");
 });
 
@@ -302,4 +307,19 @@ test("forceFallback skips the worklet even when it is available", async () => {
     assert.equal(called, 0);
     assert.equal(a.fallbackReason, "forced");
   } finally { delete global.AudioWorkletNode; }
+});
+
+test("position messages from the fallback carry the same fields", async () => {
+  const ctx = fakeContext();
+  const a = new YMAudio(ctx);
+  await a.init();
+  a.load(scale());
+  const proc = ctx.processors[0];
+  const seen = [];
+  a.addPositionListener(m => seen.push(m));
+  for (let i = 0; i < 30; i++) { ctx.currentTime += 2048 / RATE; proc.onaudioprocess({ outputBuffer: fakeBuffer(2048) }); }
+  const m = seen[seen.length - 1];
+  assert.equal(m.samples, 30 * 2048);
+  assert.ok(Math.abs(m.pos - m.samples / (RATE / 50)) < 1e-6);
+  assert.ok(m.time > 0);
 });

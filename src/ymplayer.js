@@ -54,6 +54,10 @@ class YMPlayer {
   // Seconds of the song played so far in this pass (not counting loops)
   get position() { return this.frame * this.samplesPerFrame / this.sampleRate; }
 
+  // Fractional frame position of the audio rendered so far. `frame` is the next frame to start, so
+  // the part of the current frame still to render is taken off.
+  get framePosition() { return this.frame - this.frameLeft / this.samplesPerFrame; }
+
   // Fill out[0..n) with mono samples
   render(out, n) { this.run(out, null, n); }
   renderStereo(left, right, n) { this.run(left, right, n); }

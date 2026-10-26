@@ -12,7 +12,10 @@
 //   { type: "play" } { type: "pause" } { type: "seek", frame } { type: "loop", value }
 // Messages, worklet -> page:
 //   { type: "loaded", frames }
-//   { type: "position", frame, frames, playing, finished, loops, peak, time }   every 7 audio blocks, roughly 55 times a second
+//   { type: "position", frame, pos, samples, frames, playing, finished, loops, peak, time }
+//        every 7 audio blocks, roughly 55 times a second. pos is the fractional frame position,
+//        samples counts samples rendered since the last load or seek (loops included), and time is
+//        the audio context's clock when the message was made.
 //   { type: "ended" }                      the song finished (only when not looping)
 //   { type: "error", message }
 
@@ -57,8 +60,8 @@ class YMProcessor extends AudioWorkletProcessor {
   post() {
     const p = this.player;
     this.port.postMessage({
-      type: "position", frame: p ? p.frame : 0, frames: p ? p.song.frames : 0,
-      playing: p ? p.playing && !p.finished : false, finished: p ? p.finished : false,
+      type: "position", frame: p ? p.frame : 0, pos: p ? p.framePosition : 0, samples: p ? p.samplesPlayed : 0,
+      frames: p ? p.song.frames : 0, playing: p ? p.playing && !p.finished : false, finished: p ? p.finished : false,
       loops: p ? p.loops : 0, peak: this.peak, time: currentTime,
     });
     this.since = 0; this.peak = 0;
@@ -114,9 +117,12 @@ class YMAudio {
     this.pending = null;            // a tune loaded before init() finished
     this.state = { frame: 0, frames: 0, playing: false, finished: false, loops: 0, peak: 0, time: 0 };
     this.onposition = null;
+    this.positionListeners = [];    // extra callbacks, for things like the demo's music clock
     this.onended = null;
     this.onerror = null;
   }
+
+  addPositionListener(fn) { this.positionListeners.push(fn); }
 
   // Must be called from a user gesture the first time. Resolves to "worklet" or "script".
   async init() {
@@ -199,14 +205,18 @@ class YMAudio {
   positionMessage(peak = 0) {
     const p = this.player;
     return {
-      type: "position", frame: p ? p.frame : 0, frames: p ? p.song.frames : 0,
-      playing: p ? p.playing && !p.finished : false, finished: p ? p.finished : false,
+      type: "position", frame: p ? p.frame : 0, pos: p ? p.framePosition : 0, samples: p ? p.samplesPlayed : 0,
+      frames: p ? p.song.frames : 0, playing: p ? p.playing && !p.finished : false, finished: p ? p.finished : false,
       loops: p ? p.loops : 0, peak, time: this.ctx.currentTime,
     };
   }
 
   handle(m) {
-    if (m.type === "position") { this.state = m; if (this.onposition) this.onposition(m); }
+    if (m.type === "position") {
+      this.state = m;
+      if (this.onposition) this.onposition(m);
+      for (const fn of this.positionListeners) fn(m);
+    }
     else if (m.type === "ended") { if (this.onended) this.onended(); }
     else if (m.type === "error") this.fail(m.message);
   }

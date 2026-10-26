@@ -20,11 +20,12 @@
     font: bold 4vmin "Courier New", monospace; letter-spacing: .2em; text-align: center;
   }
   #start small { color: #48f; font-size: 2.2vmin; }
+  #start #tune { color: #fc0; font-size: 1.8vmin; letter-spacing: .08em; opacity: .85; }
   /* status line for a dropped YM tune */
   #ymstatus {
     position: absolute; left: 0; right: 0; top: 0; padding: .6vmin 1.2vmin; z-index: 3; pointer-events: none;
     font: 2vmin "Courier New", monospace; color: #fc0; background: rgba(0,0,0,.55); white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis;
+    overflow: hidden; text-overflow: ellipsis; transition: opacity 1s;
   }
   #start span { animation: blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
@@ -36,6 +37,7 @@
   <div id="start">
     PIXEL RIOT
     <small>A 320x200 TRIBUTE TO THE ST &amp; AMIGA SCENE</small>
+    <small id="tune"></small>
     <span>[ CLICK TO START - SOUND ON ]</span>
   </div>
   <div id="ymstatus"></div>
@@ -46,6 +48,9 @@
 <script src="src/ymplayer.js"></script>
 <script src="src/audio.js"></script>
 <script src="src/ymui.js"></script>
+<script src="src/musicsync.js"></script>
+<script src="src/builtintune.js"></script>
+<script src="tunes/default-tune.js"></script>
 <script src="demo.js"></script>
 </body>
 </html>

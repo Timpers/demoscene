@@ -8,7 +8,9 @@ const { YM2149 } = require("../src/ym2149.js");
 const { YMPlayer } = require("../src/ymplayer.js");
 const { parseYm } = require("../src/ymfile.js");
 
-const ymDir = path.join(__dirname, "..", "ym");
+const ymDir = path.join(__dirname, "..", "ym");                      // git-ignored local tunes, may be absent
+const tunesDir = path.join(__dirname, "..", "tunes", "stsound");     // checked-in sample tunes
+const findTune = name => [tunesDir, ymDir].map(d => path.join(d, name)).find(f => fs.existsSync(f));
 
 // Builds an in-memory song object (what parseYm returns) from per-frame register arrays
 function song(frames, extra = {}) {
@@ -233,8 +235,8 @@ test("a digidrum overrides its channel and then hands it back", () => {
 // ---- real tunes, if present locally ----
 
 function playReal(name, seconds, check, needAudible = true) {
-  const file = path.join(ymDir, name);
-  if (!fs.existsSync(file)) return;
+  const file = findTune(name);
+  if (!file) return;
   const s = parseYm(fs.readFileSync(file));
   const p = new YMPlayer(s, { sampleRate: 48000, loop: false });
   const buf = render(p, seconds);
@@ -245,19 +247,19 @@ function playReal(name, seconds, check, needAudible = true) {
   if (check) check(p, s);
 }
 
-test("real tunes with effects play without problems", { skip: !fs.existsSync(ymDir) && "no ym/ folder" }, () => {
+test("real tunes with effects play without problems", { skip: !findTune("VirtualEscape1.YM") && "no sample tunes" }, () => {
   for (const n of ["VirtualEscape1.YM", "VirtualEscape2.ym", "ND-Loader.ym", "ND-Toxygene.ym"]) playReal(n, 16);
   let sidSeen = 0;
-  const file = path.join(ymDir, "VirtualEscape1.YM");
-  if (fs.existsSync(file)) {
+  const file = findTune("VirtualEscape1.YM");
+  if (file) {
     const p = new YMPlayer(parseYm(fs.readFileSync(file)), { sampleRate: 48000, loop: false });
     p.onFrame = () => { if (p.chip.sidOn.some(Boolean)) sidSeen++; };
     render(p, 10);
     assert.ok(sidSeen > 50, `SID voice started on ${sidSeen} frames`);
   }
   playReal("jess2.ym", 25);
-  const jess = path.join(ymDir, "jess2.ym");
-  if (fs.existsSync(jess)) {
+  const jess = findTune("jess2.ym");
+  if (jess) {
     const p = new YMPlayer(parseYm(fs.readFileSync(jess)), { sampleRate: 48000, loop: false });
     let drums = 0; p.onFrame = () => { if (p.chip.drumOn.some(Boolean)) drums++; };
     render(p, 25);
@@ -265,6 +267,13 @@ test("real tunes with effects play without problems", { skip: !fs.existsSync(ymD
   }
 });
 
-test("every local tune plays for a few seconds without errors", { skip: !fs.existsSync(ymDir) && "no ym/ folder" }, () => {
-  for (const name of fs.readdirSync(ymDir).filter(n => /\.ym$/i.test(n))) playReal(name, 3, null, false);
+test("every available tune plays for a few seconds without errors", { skip: !fs.existsSync(tunesDir) && !fs.existsSync(ymDir) && "no tunes" }, () => {
+  const names = new Set();
+  for (const d of [tunesDir, ymDir]) if (fs.existsSync(d)) for (const n of fs.readdirSync(d)) if (/\.ym$/i.test(n)) names.add(n);
+  let played = 0;
+  for (const name of names) {
+    try { parseYm(fs.readFileSync(findTune(name))); } catch (e) { if (/not supported/.test(e.message)) continue; throw e; }   // MIX1 and YMT files are rejected on purpose
+    playReal(name, 3, null, false); played++;
+  }
+  assert.ok(played > 0);
 });

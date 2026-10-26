@@ -145,25 +145,114 @@ const check = (name, ok, detail = "") => {
     dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], "tune.ym"));
     window.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
   }, fs.readFileSync(file).toString("base64"));
-  await dropOnDemo(first("tests/data/envelopes.ym"));
-  await sleep(500);
-  check("demo: a tune dropped before the click is accepted", /Envelope shapes/.test(await demo.textContent("#ymstatus")), await demo.textContent("#ymstatus"));
+  const dstate = () => demo.evaluate(() => ({ ...window.__demo, audio: ymAudio && ymAudio.state, ctxTime: ac && ac.currentTime }));
+
+  check("demo: the baked default tune is loaded before the click", /Virtual Escape/.test(await demo.textContent("#ymstatus")), await demo.textContent("#ymstatus"));
+  check("demo: the start screen names the tune", /MUSIC: Virtual Escape.*Furax/.test(await demo.textContent("#tune")), await demo.textContent("#tune"));
   await demo.click("#start");
-  await sleep(2500);
-  const st = await demo.evaluate(() => ({ mode: ymAudio && ymAudio.mode, ready: ymAudio && ymAudio.ready, state: ymAudio && ymAudio.state, timer: typeof schedTimer }));
-  check("demo: YM audio started after the click", st.ready && (fallback ? st.mode === "script" : st.mode === "worklet"), st.mode);
-  check("demo: that tune plays and the built-in synth never started", st.state.playing && st.state.frame > 50 && st.timer === "undefined", `frame ${st.state.frame}`);
+  await sleep(3000);
+  const st = await demo.evaluate(() => ({ mode: ymAudio && ymAudio.mode, ready: ymAudio && ymAudio.ready, playing: ymAudio && ymAudio.state.playing }));
+  check("demo: audio started after the click", st.ready && (fallback ? st.mode === "script" : st.mode === "worklet") && st.playing, st.mode);
+  let d = await dstate();
+  check("demo: the visuals run on the music clock", d.mode === "music" && d.part === 0, JSON.stringify({ mode: d.mode, part: d.part, t: +d.t.toFixed(2) }));
+  check("demo: the old synth is gone", await demo.evaluate(() => typeof schedTimer === "undefined" && typeof scheduleStep === "undefined"));
   const lit = await demo.evaluate(() => { const c = document.getElementById("c").getContext("2d").getImageData(0, 0, 320, 200).data; let n = 0; for (let i = 0; i < c.length; i += 4) if (c[i] || c[i + 1] || c[i + 2]) n++; return n; });
   check("demo: visuals are running", lit > 5000, lit + " lit pixels");
   await demo.screenshot({ path: path.join(shots, `demo-${channel}${fallback ? "-fallback" : ""}.png`) });
-  await dropOnDemo(first("tests/data/sid-voice.ym"));
-  await sleep(1200);
-  check("demo: dropping a second tune switches to it", /SID voice/.test(await demo.textContent("#ymstatus")) && await demo.evaluate(() => ymAudio.state.playing), await demo.textContent("#ymstatus"));
 
-  const untouched = await context.newPage();
-  await untouched.goto(url("index.html"));
-  await untouched.click("#start"); await sleep(1500);
-  check("demo: with no tune dropped, the built-in synth still runs", await untouched.evaluate(() => typeof schedTimer !== "undefined"));
+  // the demo clock stays locked to the audio clock
+  const offs = [];
+  for (let i = 0; i < 4; i++) { const x = await dstate(); offs.push(x.ctxTime - x.t); await sleep(1000); }
+  check("demo: the demo clock keeps a steady offset from the audio clock", Math.max(...offs) - Math.min(...offs) < 0.06, offs.map(o => o.toFixed(3)).join(", "));
+
+  // beat signal
+  let maxBeat = 0;
+  for (let i = 0; i < 80; i++) { maxBeat = Math.max(maxBeat, (await dstate()).beat); await sleep(50); }
+  check("demo: the beat signal fires with the music", maxBeat > 0.3, "max beat " + maxBeat.toFixed(2));
+
+  // parts follow the music: cross a slice boundary (slices are 1/15 of this 287 s tune)
+  const boundary = await demo.evaluate(() => Math.round(currentSong.frames / 15));
+  await demo.evaluate(b => ymAudio.seek(b - 75), boundary);      // 1.5 s before the cue point
+  await sleep(400);
+  const before = await dstate();
+  await sleep(1700);
+  const after = await dstate();
+  check("demo: the part changes exactly at the cue point in the music", before.part === 0 && after.part === 1 && after.local < 1.5, `part ${before.part} -> ${after.part}, ${after.local.toFixed(2)} s into the new part`);
+
+  // loop: the demo restarts at part A when the music loops
+  await demo.evaluate(() => ymAudio.seek(currentSong.frames - 40));
+  await sleep(500);
+  const preLoop = await dstate();
+  await sleep(1800);
+  const postLoop = await dstate();
+  check("demo: the demo restarts at part A when the music loops", preLoop.part === 14 % 3 && postLoop.audio.loops >= 1 && postLoop.part === 0 && postLoop.local < 2, `part ${preLoop.part} -> ${postLoop.part}, loops ${postLoop.audio.loops}`);
+
+  // pause freezes the demo
+  await demo.keyboard.press("Space"); await sleep(400);
+  const p1 = await dstate(); await sleep(500); const p2 = await dstate();
+  check("demo: pausing the music holds the demo clock and part", p1.t === p2.t && p1.part === p2.part && !p2.audio.playing, `t ${p1.t.toFixed(3)}`);
+  await demo.keyboard.press("Space"); await sleep(600);
+  const p3 = await dstate();
+  check("demo: resuming carries on from where it stopped", p3.t > p2.t && p3.t - p2.t < 1.5 && p3.audio.playing, `t ${p2.t.toFixed(2)} -> ${p3.t.toFixed(2)}`);
+
+  // a dropped tune takes over, and the parts follow it
+  await dropOnDemo(first("tests/data/envelopes.ym"));
+  await sleep(1500);
+  d = await dstate();
+  check("demo: a dropped tune replaces the default and the demo follows it", /Envelope shapes/.test(await demo.textContent("#ymstatus")) && d.mode === "music" && d.audio.playing, await demo.textContent("#ymstatus"));
+  await demo.evaluate(() => ymAudio.seek(0)); await sleep(300);
+  await sleep(7000);
+  d = await dstate();
+  check("demo: a 16 s tune gets three parts of about 5 s each", d.part === 1 && d.length > 5 && d.length < 5.6, `part ${d.part}, length ${d.length.toFixed(2)} s`);
+
+  // a tune dropped before the click is held until the click
+  const early = await context.newPage();
+  await early.goto(url("index.html") + (fallback ? "?fallback=1" : ""));
+  await early.evaluate(b64 => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], "early.ym"));
+    window.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  }, fs.readFileSync(first("tests/data/sid-voice.ym")).toString("base64"));
+  await sleep(400);
+  check("demo: a tune dropped before the click replaces the default", /SID voice/.test(await early.textContent("#ymstatus")), await early.textContent("#ymstatus"));
+  await early.click("#start"); await sleep(2000);
+  check("demo: and plays after the click", await early.evaluate(() => ymAudio.state.playing && currentSong.title === "SID voice"));
+
+  // the built-in tune: on request, and as the fallback when the baked tune is missing (a fresh copy
+  // of the page without the tunes folder)
+  const builtin = await context.newPage();
+  await builtin.goto(url("index.html") + "?tune=builtin" + (fallback ? "&fallback=1" : ""));
+  check("demo: ?tune=builtin loads the built-in tune", /Pixel Riot Theme/.test(await builtin.textContent("#ymstatus")), await builtin.textContent("#ymstatus"));
+  await builtin.click("#start"); await sleep(2500);
+  const bs = await builtin.evaluate(() => ({ d: window.__demo, a: ymAudio.state }));
+  check("demo: the built-in tune plays, with three parts of about 20 s", bs.a.playing && bs.d.mode === "music" && Math.abs(bs.d.length - 20.48) < 0.01 && bs.a.peak > 0.05, `length ${bs.d.length.toFixed(2)} s, peak ${bs.a.peak.toFixed(2)}`);
+  await builtin.evaluate(() => ymAudio.seek(currentSong.frames - 40)); await sleep(2200);
+  const bl = await builtin.evaluate(() => ({ d: window.__demo, a: ymAudio.state }));
+  check("demo: the built-in tune loops and the demo restarts at part A", bl.a.loops >= 1 && bl.d.part === 0 && bl.d.local < 2.5, `loops ${bl.a.loops}, part ${bl.d.part}`);
+
+  const bare = path.join(os.tmpdir(), "pixelriot-no-tunes");
+  fs.rmSync(bare, { recursive: true, force: true });
+  fs.mkdirSync(bare, { recursive: true });
+  for (const f of ["index.html", "demo.js"]) fs.copyFileSync(path.join(repo, f), path.join(bare, f));
+  fs.cpSync(path.join(repo, "src"), path.join(bare, "src"), { recursive: true });
+  const bareErrors = [];
+  const barePage = await context.newPage();
+  barePage.on("console", m => { if (m.type() === "error" && !/default-tune|ERR_FILE_NOT_FOUND|favicon/i.test(m.text())) bareErrors.push(m.text()); });
+  barePage.on("pageerror", e => bareErrors.push("pageerror: " + e.message));
+  await barePage.goto("file:///" + path.join(bare, "index.html").replace(/\\/g, "/") + (fallback ? "?fallback=1" : ""));
+  check("demo: with no tunes folder at all it still has a tune (the built-in one)", /Pixel Riot Theme/.test(await barePage.textContent("#ymstatus")), await barePage.textContent("#ymstatus"));
+  await barePage.click("#start"); await sleep(2500);
+  check("demo: and plays it", await barePage.evaluate(() => ymAudio.state.playing && ymAudio.state.peak > 0.05 && window.__demo.mode === "music"));
+  check("demo: with nothing but the page and src/ there are no errors", bareErrors.length === 0, bareErrors.join(" | "));
+  fs.rmSync(bare, { recursive: true, force: true });
+
+  // with no audio at all the demo still runs, on its timer
+  const mute = await context.newPage();
+  await mute.addInitScript(() => { window.AudioContext = undefined; window.webkitAudioContext = undefined; });
+  await mute.goto(url("index.html"));
+  await mute.click("#start"); await sleep(1500);
+  const m = await mute.evaluate(() => window.__demo);
+  check("demo: with no audio at all it falls back to its own timer and keeps running", m && m.mode === "timer" && m.t > 0.5, JSON.stringify(m && { mode: m.mode, t: +m.t.toFixed(2) }));
 
   const real = errors.filter(e => !/favicon/i.test(e)), demoReal = demoErrors.filter(e => !/favicon/i.test(e));
   check("no console errors on the player page", real.length === 0, real.join(" | "));

@@ -10,6 +10,7 @@ const { lhaCrc16, lhaDepack, lhaIsArchive } = require("../src/lha.js");
 const dataDir = path.join(__dirname, "data");
 const ymDir = path.join(__dirname, "..", "ym");     // git-ignored local tunes, may be absent
 const haveYm = fs.existsSync(ymDir);
+const tunesDir = path.join(__dirname, "..", "tunes", "stsound");     // checked-in sample tunes
 const readData = name => fs.readFileSync(path.join(dataDir, name));
 const localFiles = (filter = () => true) => haveYm ? fs.readdirSync(ymDir).filter(n => /\.ym$/i.test(n) && filter(n)) : [];
 
@@ -177,5 +178,49 @@ test("corrupt LHA data throws or returns, and does not hang", { skip: !haveYm &&
       const r = lhaDepack(rnd() < 0.2 ? b.subarray(0, Math.floor(rnd() * b.length)) : b);
       assert.ok(r.data instanceof Uint8Array);
     } catch (e) { assert.ok(e instanceof Error); }
+  }
+});
+
+// ---- the checked-in ST-Sound sample tunes (tunes/stsound), which are always there ----
+
+test("sample tunes: every supported file parses, and the CRC passes on the compressed ones", () => {
+  const names = fs.readdirSync(tunesDir).filter(n => /\.ym$/i.test(n));
+  assert.equal(names.length, 11);
+  let parsed = 0;
+  for (const name of names) {
+    const bytes = fs.readFileSync(path.join(tunesDir, name));
+    let y;
+    try { y = parseYm(bytes); } catch (e) { assert.match(e.message, /not supported/, name); continue; }
+    assert.ok(y.frames > 0 && y.regs.length === y.frames * 16, name);
+    assert.ok(!y.packed || y.crcOk, name + ": CRC");
+    parsed++;
+  }
+  assert.equal(parsed, 9, "nine are supported; the other two are MIX1 and YMT1");
+});
+
+test("sample tunes: the MIX1 and YMT1 files are refused with a clear message", () => {
+  assert.throws(() => parseYm(fs.readFileSync(path.join(tunesDir, "Union Tcb 2.ym"))), /MIX1 files are not supported/);
+  assert.throws(() => parseYm(fs.readFileSync(path.join(tunesDir, "YMKNUCK.YM"))), /YMT1 files are not supported/);
+});
+
+test("sample tunes: formats, titles and effects read back as expected", () => {
+  const read = n => parseYm(fs.readFileSync(path.join(tunesDir, n)));
+  const ve2 = read("VirtualEscape2.ym");
+  assert.equal(ve2.format, "YM6!"); assert.equal(ve2.frames, 14350); assert.equal(ve2.title, "Virtual Escape (Equinox) Main Tune");
+  assert.equal(read("ANCOOL1.YM").format, "YM2!");
+  const jess2 = read("jess2.ym");
+  assert.equal(jess2.drums.length, 3); assert.equal(jess2.drum4bit, true);
+  assert.equal(read("ND-Toxygene.ym").loopFrame, 770);
+});
+
+test("sample tunes: corrupt compressed data throws or returns, and does not hang", () => {
+  const base = fs.readFileSync(path.join(tunesDir, "VirtualEscape2.ym"));
+  assert.ok(lhaIsArchive(base));
+  let seed = 4242;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  for (let i = 0; i < 300; i++) {
+    const b = Buffer.from(base);
+    for (let k = 0; k < 1 + Math.floor(rnd() * 8); k++) b[30 + Math.floor(rnd() * (b.length - 30))] = Math.floor(rnd() * 256);
+    try { lhaDepack(rnd() < 0.2 ? b.subarray(0, Math.floor(rnd() * b.length)) : b); } catch (e) { assert.ok(e instanceof Error); }
   }
 });

@@ -9,8 +9,9 @@ const px = new Uint32Array(img.data.buffer);
 
 const PART_LEN = 20;
 const SCROLL_TEXT =
-  "      YO! PIXEL RIOT PROUDLY PRESENTS... A TINY INTRO IN 320X200 WITH NOT A SINGLE BYTE OF ASSETS...   " +
-  "ALL CODE BY YOU-KNOW-WHO, MUSIC SYNTHESISED LIVE WITH SQUARE WAVES AND A LITTLE NOISE...   " +
+  "      YO! PIXEL RIOT PROUDLY PRESENTS... A TINY INTRO IN 320X200 WITH ONE LITTLE TUNE AND A WHOLE LOT OF CODE...   " +
+  "ALL CODE BY YOU-KNOW-WHO, MUSIC PLAYED LIVE BY A SOFTWARE YM2149 SOUND CHIP, JUST LIKE ON THE ST... " +
+  "DROP ANY .YM FILE ONTO THE SCREEN (OR PRESS O) AND IT PLAYS RIGHT HERE...   " +
   "GREETINGS FLY OUT TO ALL THE LEGENDS: THE CAREBEARS, TCB, THE LOST BOYS, DELTA FORCE, " +
   "ELECTRONIC IMAGES, SYNC, CUDDLY, EQUINOX, ANARCHY, KEFRENS, SPREADPOINT, FAIRLIGHT AND THE REST OF THE OLD CREW!   " +
   "REMEMBER: NO CPU WAS HARMED IN THE MAKING OF THIS DEMO... WELL, MAYBE A LITTLE. " +
@@ -98,16 +99,16 @@ function drawCopper(t) {
   }
   const bars = 8;
   for (let k = 0; k < bars; k++) {
-    const centre = H / 2 + Math.sin(t * 1.4 + k * 0.45) * 70 + Math.sin(t * 0.7 + k * 0.2) * 20;
+    const centre = H / 2 + Math.sin(t * 1.4 + k * 0.45) * 70 * (1 + 0.25 * beat) + Math.sin(t * 0.7 + k * 0.2) * 20;
     const [cr, cg, cb] = hsl2rgb((k / bars + t * 0.05) % 1, 1, 0.55);
     for (let d = -12; d <= 12; d++) {
       const y = Math.round(centre) + d;
       if (y < 0 || y >= H) continue;
       const a = Math.cos((d / 12) * Math.PI / 2);
       const i = a * a;
-      r[y] = r[y] * (1 - i) + (cr + 80 * i) * i;
-      g[y] = g[y] * (1 - i) + (cg + 80 * i) * i;
-      b[y] = b[y] * (1 - i) + (cb + 80 * i) * i;
+      r[y] = r[y] * (1 - i) + (cr + (80 + 110 * beat) * i) * i;
+      g[y] = g[y] * (1 - i) + (cg + (80 + 110 * beat) * i) * i;
+      b[y] = b[y] * (1 - i) + (cb + (80 + 110 * beat) * i) * i;
     }
   }
   for (let y = 0; y < H; y++) {
@@ -238,137 +239,117 @@ function partA(t, dt) {
   drawCopper(t);
   drawStars(dt, 70);
   drawLogo(t);
-  drawCube(W / 2, 112, 28, t * 0.9, t * 1.3, t * 0.5, t * 50);
+  drawCube(W / 2, 112, 28 * (1 + 0.35 * beat), t * 0.9, t * 1.3, t * 0.5, t * 50);
 }
 function partB(t, dt) {
   drawPlasma(t);
   for (let i = 0; i < 4; i++) {
     const a = t * 1.5 + i * Math.PI / 2;
-    drawCube(W / 2 + Math.cos(a) * 95, 95 + Math.sin(a) * 30, 14, t + i, t * 1.2, i, i * 90 + t * 40);
+    drawCube(W / 2 + Math.cos(a) * 95, 95 + Math.sin(a) * 30, 14 * (1 + 0.3 * beat), t + i, t * 1.2, i, i * 90 + t * 40);
   }
-  drawCube(W / 2, 95, 38, t * 0.8, t * 1.1, t * 0.4, t * 60);
+  drawCube(W / 2, 95, 38 * (1 + 0.3 * beat), t * 0.8, t * 1.1, t * 0.4, t * 60);
 }
 function partC(t, dt) {
   drawTunnel(t);
-  drawDotSphere(t, W / 2, 95, 65);
+  drawDotSphere(t, W / 2, 95, 65 * (1 + 0.15 * beat));
 }
 const PARTS = [partA, partB, partC];
 
+// ---------- music ----------
+// The soundtrack is a YM tune played by the YM2149 emulator. The default is baked into
+// tunes/default-tune.js, and any .ym file dropped on the page (or chosen with O) replaces it. The demo
+// follows the music: its clock comes from the audio, the parts change at fixed points in the tune
+// (and restart when the tune loops), and the beat is read from the tune's registers.
+const CREDIT_MS = 10000;                 // how long the credit line stays bright after a tune starts or loops
+let ac = null, ymAudio = null, musicClock = null, currentSong = null, onsets = null, beat = 0;
+let creditUntil = 0, lastLoops = 0;
+const creditEl = document.getElementById("ymstatus");
+
+const ymui = new YMUI({
+  status: creditEl,
+  onTune(song) {
+    currentSong = song;
+    onsets = YMBeat.analyse(song);
+    if (musicClock) musicClock.setSong(song);
+    lastLoops = 0;
+    creditUntil = performance.now() + CREDIT_MS;
+    const el = document.getElementById("tune");
+    if (el) el.textContent = "MUSIC: " + (song.title || "?") + (song.author.trim() ? " - " + song.author.trim() : "");
+  },
+});
+ymui.attach();
+
+// The baked default tune if there is one, otherwise the demo's own built-in tune (src/builtintune.js),
+// which needs no file. Add ?tune=builtin to the address to force the built-in tune.
+function loadDefaultTune() {
+  if (!/[?&]tune=builtin\b/.test(location.search) && typeof YM_DEFAULT_TUNE !== "undefined") {
+    try {
+      const bytes = Uint8Array.from(atob(YM_DEFAULT_TUNE.data), c => c.charCodeAt(0));
+      ymui.loadSong(parseYm(bytes), YM_DEFAULT_TUNE.name);
+      return;
+    } catch (err) { console.warn("The default tune could not be loaded, using the built-in tune:", err); }
+  }
+  ymui.loadSong(ymBuiltinTune(), "built-in");
+}
+loadDefaultTune();
+
+async function startAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  ymAudio = new YMAudio(ac, { forceFallback: location.search.includes("fallback") });
+  musicClock = new MusicClock({ ctx: ac, isLooping: () => ymAudio.loop });
+  if (currentSong) musicClock.setSong(currentSong);
+  ymAudio.addPositionListener(m => {
+    musicClock.onPosition(m, performance.now());
+    if (m.loops !== lastLoops) { lastLoops = m.loops; creditUntil = performance.now() + CREDIT_MS; }
+  });
+  await ymAudio.init();
+  ymui.setAudio(ymAudio);                // plays the tune that is already loaded
+}
+
+// Where the music is, for the current frame: null until the audio is reporting
+function musicSync(now) {
+  if (!musicClock || !currentSong || !musicClock.ready(now)) return null;
+  const pos = musicClock.position(now);
+  const part = ymPartAt(currentSong, pos.frame, pos.loops);
+  return {
+    t: musicClock.time(now), part: part.part, local: part.local, length: part.length,
+    beat: YMBeat.level(onsets, pos.frame, currentSong.frameRate),
+  };
+}
+
 // ---------- main loop ----------
 let t0 = 0, last = 0;
+let lastSync = null;                     // what the last frame used, for tests and debugging
+Object.defineProperty(window, "__demo", { get: () => lastSync });
 function frame(now) {
-  // the first rAF timestamp can precede t0, which made t negative
-  const t = Math.max(0, (now - t0) / 1000), dt = Math.max(0, Math.min(0.05, t - last));
+  const sync = musicSync(now);
+  let t, idx, local, len;
+  if (sync) {
+    ({ t, part: idx, local, length: len, beat } = sync);
+  } else {
+    // No music yet (or no audio): run on the wall clock with fixed-length parts
+    t = Math.max(0, (now - t0) / 1000);
+    idx = Math.floor(t / PART_LEN) % PARTS.length;
+    local = t % PART_LEN; len = PART_LEN; beat = 0;
+  }
+  const dt = Math.max(0, Math.min(0.05, t - last));      // t can step back when the music is sought or switched
   last = t;
-  const idx = Math.floor(t / PART_LEN) % PARTS.length;
-  const local = t % PART_LEN;
+  lastSync = { mode: sync ? "music" : "timer", t, part: idx, local, length: len, beat };
   PARTS[idx](t, dt);
   drawScroller(t, H - 52, 12);
 
   // fade in/out between parts
-  const fade = Math.max(1 - local / 0.7, (local - (PART_LEN - 0.7)) / 0.7, 0);
+  const fade = Math.max(1 - local / 0.7, (local - (len - 0.7)) / 0.7, 0);
   if (fade > 0) { ctx.fillStyle = `rgba(0,0,0,${fade})`; ctx.fillRect(0, 0, W, H); }
+  creditEl.style.opacity = now < creditUntil ? 1 : 0.3;
   requestAnimationFrame(frame);
-}
-
-// ---------- chiptune ----------
-let ac, master, echo, schedTimer;
-const midi = n => 440 * 2 ** ((n - 69) / 12);
-const PROG = [[57, 60, 64], [53, 57, 60], [48, 52, 55], [55, 59, 62]]; // Am F C G
-const LEAD = [
-  [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [81, 0, 0, 79, 0, 76, 0, 0, 72, 0, 76, 0, 79, 0, 0, 0],
-  [81, 0, 84, 0, 81, 0, 79, 0, 76, 0, 0, 72, 0, 74, 76, 0],
-  [88, 0, 86, 0, 84, 0, 81, 0, 79, 0, 76, 0, 79, 81, 0, 0],
-];
-const BPM = 125, STEP = 60 / BPM / 4;
-let nextTime = 0, step = 0, noiseBuf;
-
-function tone(type, freq, time, dur, vol, send = 0) {
-  const o = ac.createOscillator(), g = ac.createGain();
-  o.type = type; o.frequency.setValueAtTime(freq, time);
-  g.gain.setValueAtTime(vol, time);
-  g.gain.exponentialRampToValueAtTime(0.0008, time + dur);
-  o.connect(g); g.connect(master);
-  if (send) { const s = ac.createGain(); s.gain.value = send; g.connect(s); s.connect(echo); }
-  o.start(time); o.stop(time + dur + 0.02);
-}
-function kick(time) {
-  const o = ac.createOscillator(), g = ac.createGain();
-  o.frequency.setValueAtTime(160, time);
-  o.frequency.exponentialRampToValueAtTime(40, time + 0.14);
-  g.gain.setValueAtTime(0.9, time);
-  g.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
-  o.connect(g); g.connect(master); o.start(time); o.stop(time + 0.25);
-}
-function noise(time, dur, vol, freq, type) {
-  const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
-  s.buffer = noiseBuf; f.type = type; f.frequency.value = freq;
-  g.gain.setValueAtTime(vol, time);
-  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
-  s.connect(f); f.connect(g); g.connect(master); s.start(time); s.stop(time + dur + 0.02);
-}
-
-function scheduleStep(s, time) {
-  const bar = Math.floor(s / 16) % 4, st = s % 16;
-  const chord = PROG[bar];
-  // arpeggio
-  const arpIdx = [0, 1, 2, 1][st % 4];
-  tone("square", midi(chord[arpIdx] + (st >= 8 ? 12 : 0)), time, STEP * 0.9, 0.07, 0.25);
-  // bass
-  if (st % 2 === 0) tone("triangle", midi(chord[0] - 24 + (st % 8 === 6 ? 12 : 0)), time, STEP * 1.8, 0.45);
-  // drums
-  if (st % 4 === 0) kick(time);
-  if (st === 4 || st === 12) noise(time, 0.14, 0.35, 1800, "bandpass");
-  if (st % 2 === 1) noise(time, 0.04, 0.12, 8000, "highpass");
-  // lead, evolves with the song
-  const section = Math.floor(s / 16) % 16;
-  const pattern = LEAD[Math.min(3, Math.floor(section / 2)) ];
-  const n = pattern[st];
-  if (n) tone("square", midi(n), time, STEP * 2.5, 0.09, 0.4);
-}
-
-function scheduler() {
-  while (nextTime < ac.currentTime + 0.15) {
-    scheduleStep(step++, nextTime);
-    nextTime += STEP;
-  }
-}
-
-function startAudio() {
-  ac = new (window.AudioContext || window.webkitAudioContext)();
-  master = ac.createGain(); master.gain.value = 0.5; master.connect(ac.destination);
-  echo = ac.createDelay(); echo.delayTime.value = STEP * 3;
-  const fb = ac.createGain(); fb.gain.value = 0.35;
-  echo.connect(fb); fb.connect(echo); echo.connect(master);
-  noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
-  const d = noiseBuf.getChannelData(0);
-  for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-  nextTime = ac.currentTime + 0.1;
-  if (!ymui.song) schedTimer = setInterval(scheduler, 25);   // a tune dropped before the click replaces the synth
-}
-
-// ---------- YM tunes ----------
-// A .ym file dropped on the page (or chosen with O) plays through the YM2149 emulator in place of the
-// built-in synth. This is the Phase 5 hook. Phase 6 replaces the synth and ties the visuals to the music.
-let ymAudio = null;
-function silenceBuiltinMusic() {
-  clearInterval(schedTimer);
-  if (master) master.gain.setTargetAtTime(0, ac.currentTime, 0.05);
-}
-const ymui = new YMUI({ status: document.getElementById("ymstatus"), onTune: silenceBuiltinMusic });
-ymui.attach();
-async function startYmAudio() {
-  ymAudio = new YMAudio(ac, { forceFallback: location.search.includes("fallback") });
-  await ymAudio.init();
-  ymui.setAudio(ymAudio);
 }
 
 // ---------- start ----------
 document.getElementById("start").addEventListener("click", e => {
   e.currentTarget.remove();
-  try { startAudio(); startYmAudio().catch(err => ymui.say("YM audio unavailable: " + err.message)); }
-  catch (err) { console.warn("Audio unavailable", err); }
+  creditUntil = performance.now() + CREDIT_MS;
+  startAudio().catch(err => { console.warn("Audio unavailable", err); ymui.say("Audio unavailable: " + err.message); });
   t0 = performance.now();
   requestAnimationFrame(frame);
 });

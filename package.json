@@ -5,6 +5,8 @@
   "scripts": {
     "test": "node --test \"tests/*.test.js\"",
     "gen-test-ym": "node tools/gen-test-ym.js",
-    "browser-check": "node tools/browser-check.js"
+    "browser-check": "node tools/browser-check.js",
+    "default-tune": "node tools/ym2js.js",
+    "export-builtin": "node tools/export-builtin.js"
   }
 }
